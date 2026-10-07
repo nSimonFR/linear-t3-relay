@@ -15,7 +15,8 @@ const b64url = (buffer: Buffer) => buffer.toString("base64url");
 async function json(url: string, init?: RequestInit) {
   const response = await fetch(url, init);
   const body = await response.json() as Record<string, unknown>;
-  if (!response.ok) throw new Error(`${url}: HTTP ${response.status} ${JSON.stringify(body)}`);
+  // Never echo the body: a token response carries the credential.
+  if (!response.ok) throw new Error(`${new URL(url).pathname}: HTTP ${response.status}${typeof body.error === "string" ? ` ${body.error}` : ""}`);
   return body;
 }
 
@@ -53,6 +54,7 @@ const token = await json(String(metadata.token_endpoint), {
   method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
   body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: redirectUri, client_id: String(client.client_id), code_verifier: verifier, resource: `${base}/mcp` }),
 });
+if (typeof token.access_token !== "string") throw new Error("T3 sign-in returned no token.");
 if (!String(token.scope ?? "").includes("orchestration:operate")) console.warn("Warning: approved read-only; the bridge needs Full access to start threads.");
 
 let env = "";

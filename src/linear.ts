@@ -16,6 +16,7 @@ export interface LinearApi {
   activity(sessionId: string, content: Activity, options?: { ephemeral?: boolean; select?: string[] }): Promise<void>;
   addLinks(sessionId: string, links: Array<{ label: string; url: string }>): Promise<void>;
   issue(issueId: string): Promise<Issue>;
+  organizationId(): Promise<string>;
   /** Attaches the PR to the issue itself, as Linear's GitHub integration would. */
   linkPullRequest(issueId: string, url: string): Promise<void>;
   /** Who started the session, or who wrote the activity when one is given. */
@@ -48,16 +49,30 @@ export class Linear implements LinearApi {
     delete this.store.state.oauthStates[state];
     if (!expires || expires < Date.now()) throw new Error("Invalid or expired OAuth state.");
     await this.token({ grant_type: "authorization_code", code, redirect_uri: `${this.config.baseUrl}/linear/oauth/callback` });
+    delete this.store.state.installation!.organizationId;
+    await this.organizationId();
+  }
+
+  /** The workspace this relay is installed in; webhooks from any other are dropped. */
+  async organizationId(): Promise<string> {
+    const installation = this.store.state.installation;
+    if (installation?.organizationId) return installation.organizationId;
+    const data = await this.graphql<{ organization: { id: string } }>(`query { organization { id } }`, {});
+    this.store.state.installation!.organizationId = data.organization.id;
+    this.store.save();
+    return data.organization.id;
   }
 
   private async token(grant: Record<string, string>) {
     const response = await this.fetcher(TOKEN_URL, {
       method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ ...grant, client_id: this.config.linearClientId, client_secret: this.config.linearClientSecret }),
+      signal: AbortSignal.timeout(15_000),
     });
     const json = await response.json() as { access_token?: string; refresh_token?: string; expires_in?: number; error_description?: string };
     if (!response.ok || !json.access_token) throw new Error(`Linear token request failed: ${json.error_description ?? response.status}`);
     this.store.state.installation = {
+      organizationId: this.store.state.installation?.organizationId,
       accessToken: json.access_token, refreshToken: json.refresh_token ?? this.store.state.installation?.refreshToken,
       expiresAt: Date.now() + (json.expires_in ?? 86_400) * 1000,
     };

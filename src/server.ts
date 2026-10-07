@@ -12,6 +12,7 @@ import { Store } from "./state.js";
 
 const run = promisify(execFile);
 
+/** Needs the relay on the T3 host; set T3CODE_BASE_REF otherwise. */
 async function defaultBranch(cwd: string): Promise<string> {
   const head = await run("git", ["-C", cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).catch(() => null);
   if (head) return head.stdout.trim().replace(/^origin\//, "");
@@ -77,7 +78,10 @@ function main() {
         if (typeof event.webhookTimestamp !== "number" || Math.abs(Date.now() - event.webhookTimestamp) > 60_000) return send(response, 401, "Stale webhook.");
         // Linear wants an answer within 5 seconds; the work happens after it.
         send(response, 200, "ok");
-        if (event.type === "AgentSessionEvent") void relay.enqueue(() => relay.handle(event));
+        if (event.type === "AgentSessionEvent") {
+          void relay.acknowledge(event);
+          void relay.enqueue(() => relay.handle(event));
+        }
         return;
       }
       send(response, 404, "Not found.");

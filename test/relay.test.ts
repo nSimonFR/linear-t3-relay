@@ -32,6 +32,7 @@ async function fixture(t: test.TestContext) {
     async addLinks(_session, added) { links.push(...added); },
     async linkPullRequest(issueId, url) { attached.push(`${issueId} ${url}`); },
     async actor(_session, activityId) { return activityId === "intruder-activity" ? "someone-else" : "me"; },
+    async organizationId() { return "org-1"; },
     async issue() { return { identifier: "NSI-7", title: "Greet loudly", url: "https://linear.app/x/NSI-7", branchName: "feature/nsi-7-greet-loudly", projectName: "T3 bridge sandbox" }; },
   };
   const t3 = { async call(tool: string, args: any = {}): Promise<any> {
@@ -64,7 +65,9 @@ test("delegation launches a worktree thread on the issue branch, once", async t 
   assert.equal(launches.length, 1);
   assert.deepEqual(launches[0]!.args.workspaceStrategy, { type: "worktree", baseRef: "main", branch: "feature/nsi-7-greet-loudly", startFromOrigin: true });
   assert.match(launches[0]!.args.message, /NSI-7[\s\S]*<issue>Greet loudly<\/issue>[\s\S]*gh pr create --draft/);
-  assert.equal(f.activities[0]!.content.type, "thought");
+  assert.deepEqual(f.activities.map(a => a.content.type), ["action"]);
+  await f.relay.acknowledge(f.event("created"));
+  assert.equal(f.activities.at(-1)!.content.type, "action", "no second 'Starting…' for an event already handled");
   assert.equal(f.store.state.sessions.ls1!.t3ThreadId, "t3-thread");
 });
 
@@ -172,4 +175,116 @@ test("a PR is attached as soon as gh pr create prints it, then never again", asy
   await f.relay.poll();
   assert.equal(f.attached.length, 1);
   assert.equal(f.links.length, 1);
+});
+
+test("acknowledge answers a new delegation within Linear's deadline, outside the queue", async t => {
+  const f = await fixture(t);
+  await f.relay.acknowledge(f.event("created"));
+  assert.deepEqual(f.activities[0]!.content, { type: "thought", body: "Starting a T3 Code thread…" });
+});
+
+test("webhooks from another workspace are ignored", async t => {
+  const f = await fixture(t);
+  await f.relay.handle({ ...f.event("created"), organizationId: "someone-elses-org" });
+  await f.relay.acknowledge({ ...f.event("created"), organizationId: "someone-elses-org" });
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.activities.length, 0);
+});
+
+test("unexpected errors reach Linear without their details", async t => {
+  const f = await fixture(t);
+  (f.relay as any).deps.defaultBranch = async () => { throw new Error("Command failed: git -C /Users/me/secret-repo"); };
+  await f.relay.handle(f.event("created"));
+  const body = (f.activities.at(-1)!.content as { body: string }).body;
+  assert.doesNotMatch(body, /secret-repo/);
+  assert.match(body, /relay's log|its log/);
+});
+
+test("a launch whose reply was lost is adopted, not repeated", async t => {
+  const f = await fixture(t);
+  const t3 = (f.relay as any).deps.t3;
+  const original = t3.call.bind(t3);
+  let launches = 0;
+  t3.call = async (tool: string, args: any) => {
+    if (tool === "t3_thread_launch") { launches++; throw new Error("timeout"); }
+    if (tool === "t3_thread_list") return { threads: [{ threadId: "t3-thread", title: "NSI-7: Greet loudly", createdAt: "2999-01-01T00:00:00Z", latestRunId: "run:1" }] };
+    return original(tool, args);
+  };
+  await f.relay.handle(f.event("created"));
+  assert.equal(launches, 1);
+  assert.equal(f.store.state.sessions.ls1!.t3ThreadId, "t3-thread");
+  assert.equal(f.store.state.sessions.ls1!.launchingSince, undefined);
+});
+
+test("only the PR that gh pr create printed is attached", async t => {
+  const f = await fixture(t);
+  await f.relay.handle(f.event("created"));
+  f.t3state.items = [
+    item(0, { type: "command_execution", text: "$ gh pr view 3\nhttps://github.com/o/other/pull/3" }),
+    item(1, { type: "command_execution", text: "$ gh pr create --draft --title x\nhttps://github.com/o/r/pull/9" }),
+  ];
+  await f.relay.poll();
+  assert.deepEqual(f.attached, ["issue-1 https://github.com/o/r/pull/9"]);
+});
+
+test("a question answered or expired in T3 stops capturing replies", async t => {
+  const f = await fixture(t);
+  await f.relay.handle(f.event("created"));
+  f.t3state.pending = ["req-1"];
+  await f.relay.poll();
+  assert.ok(f.store.state.sessions.ls1!.question);
+  f.t3state.pending = [];
+  await f.relay.poll();
+  assert.equal(f.store.state.sessions.ls1!.question, undefined);
+  await f.relay.handle(f.event("prompted", { id: "a1", body: "Also update the README" }));
+  assert.equal(f.calls.at(-1)!.tool, "t3_thread_send");
+});
+
+test("a reply to a question that T3 no longer accepts becomes a message", async t => {
+  const f = await fixture(t);
+  await f.relay.handle(f.event("created"));
+  f.t3state.pending = ["req-1"];
+  await f.relay.poll();
+  const t3 = (f.relay as any).deps.t3;
+  const original = t3.call.bind(t3);
+  t3.call = async (tool: string, args: any) => { if (tool === "t3_pending_request_respond") throw new Error("gone"); return original(tool, args); };
+  await f.relay.handle(f.event("prompted", { id: "a1", body: "A" }));
+  await f.relay.handle(f.event("prompted", { id: "a2", body: "yes" }));
+  assert.equal(f.calls.at(-1)!.tool, "t3_thread_send");
+  assert.equal(f.store.state.sessions.ls1!.question, undefined);
+});
+
+test("a final response that fails to post is retried, not lost", async t => {
+  const f = await fixture(t);
+  await f.relay.handle(f.event("created"));
+  f.t3state.items = [item(0, { type: "assistant_message", text: "All done" })];
+  f.t3state.runs = [{ runId: RUN1, status: "completed" }];
+  const linear = (f.relay as any).deps.linear;
+  const original = linear.activity;
+  let down = true;
+  linear.activity = async (...args: any[]) => { if (down && args[1].type === "response") throw new Error("linear 503"); return original(...args); };
+  await f.relay.poll();
+  assert.equal(f.store.state.sessions.ls1!.awaitingRunId, RUN1);
+  down = false;
+  await f.relay.poll();
+  assert.deepEqual(f.activities.at(-1)!.content, { type: "response", body: "All done" });
+  assert.equal(f.store.state.sessions.ls1!.awaitingRunId, undefined);
+});
+
+test("an interrupt from T3 itself is reported; a Linear stop is not reported twice", async t => {
+  const f = await fixture(t);
+  await f.relay.handle(f.event("created"));
+  f.t3state.runs = [{ runId: RUN1, status: "interrupted" }];
+  await f.relay.poll();
+  assert.match((f.activities.at(-1)!.content as { body: string }).body, /Stopped in T3 Code/);
+});
+
+test("a thread that cannot be read is eventually given up", async t => {
+  const f = await fixture(t);
+  await f.relay.handle(f.event("created"));
+  const t3 = (f.relay as any).deps.t3;
+  t3.call = async () => { throw new Error("thread not found"); };
+  for (let i = 0; i < 600; i++) await f.relay.poll();
+  assert.equal(f.store.state.sessions.ls1!.awaitingRunId, undefined);
+  assert.match((f.activities.at(-1)!.content as { body: string }).body, /Lost track/);
 });

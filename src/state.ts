@@ -12,16 +12,23 @@ export type Session = {
   awaitingRunId?: string;
   lastReplyItemId?: string;
   question?: { requestId: string; questions: Question[]; answers: Record<string, string | string[]> };
+  /** Answered requests, so one still listed for a moment is not asked twice. */
+  answeredRequests?: string[];
   prUrl?: string;
+  /** Stop came from Linear and was already answered there. */
   stopped?: boolean;
+  /** Set before launching: a launch whose reply was lost is adopted, never repeated. */
+  launchingSince?: string;
+  /** Consecutive failed polls; past a limit the session is given up. */
+  pollFailures?: number;
 };
 
-export type Installation = { accessToken: string; refreshToken?: string; expiresAt: number };
+export type Installation = { accessToken: string; refreshToken?: string; expiresAt: number; organizationId?: string };
 
 export type State = {
   installation?: Installation;
   /** T3 MCP bearer the relay minted itself (see T3CODE_RENEW_COMMAND). */
-  t3?: { token: string; expiresAt: number };
+  t3?: { token: string; expiresAt: number; issuedAt?: number };
   oauthStates: Record<string, number>;
   sessions: Record<string, Session>;
   /** Webhook deliveries already accepted, so Linear retries are ignored. */

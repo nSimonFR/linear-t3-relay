@@ -39,26 +39,53 @@ test("the pairing code is read from JSON or plain output", async () => {
   assert.equal(await pairingCodeFrom("t3", run("Token: XYZ\n")), "XYZ");
 });
 
-test("the credential signs in once, renews near expiry and after invalidation", async t => {
+test("the credential signs in once, renews in the last fifth of its life, and after invalidation", async t => {
   const root = await mkdtemp(path.join(tmpdir(), "t3-auth-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const store = new Store(path.join(root, "state.json"));
   let signIns = 0;
-  let expiresIn = 30 * 86_400_000;
+  let fail = false;
   const credential = new T3Credential({
     url: "http://t3", store, renewCommand: "t3 auth pairing create --json",
-    pairingCode: async () => "code", signIn: async () => ({ token: `token-${++signIns}`, expiresAt: Date.now() + expiresIn }),
+    pairingCode: async () => "code",
+    signIn: async () => {
+      if (fail) throw new Error("t3 down");
+      const now = Date.now();
+      return { token: `token-${++signIns}`, expiresAt: now + 30 * 86_400_000, issuedAt: now };
+    },
   });
   const [a, b] = await Promise.all([credential.token(), credential.token()]);
   assert.equal(a, "token-1"); assert.equal(b, "token-1");
   assert.equal(await credential.token(), "token-1");
   credential.invalidate();
   assert.equal(await credential.token(), "token-2");
-  expiresIn = 4 * 86_400_000;
-  credential.invalidate();
-  assert.equal(await credential.token(), "token-3");
-  assert.equal(await credential.token(), "token-4", "inside the 5-day window it renews again");
-  assert.equal(new Store(path.join(root, "state.json")).state.t3?.token, "token-4", "persisted across restarts");
+  assert.equal(new Store(path.join(root, "state.json")).state.t3?.token, "token-2", "persisted across restarts");
+
+  // Four days left of thirty: renew early, but keep the working bearer if that fails.
+  store.state.t3 = { token: "old", expiresAt: Date.now() + 4 * 86_400_000, issuedAt: Date.now() - 26 * 86_400_000 };
+  fail = true;
+  assert.equal(await credential.token(), "old");
+  fail = false;
+  assert.equal(await credential.token(), "old", "a failed early renewal is not retried on every call");
+});
+
+test("an early renewal replaces the bearer", async t => {
+  const root = await mkdtemp(path.join(tmpdir(), "t3-auth-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new Store(path.join(root, "state.json"));
+  store.state.t3 = { token: "old", expiresAt: Date.now() + 4 * 86_400_000, issuedAt: Date.now() - 26 * 86_400_000 };
+  const credential = new T3Credential({ url: "http://t3", store, renewCommand: "x", pairingCode: async () => "c",
+    signIn: async () => ({ token: "new", expiresAt: Date.now() + 30 * 86_400_000, issuedAt: Date.now() }) });
+  assert.equal(await credential.token(), "new");
+});
+
+test("an expired bearer with a failing renewal is an error, not a stale token", async t => {
+  const root = await mkdtemp(path.join(tmpdir(), "t3-auth-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new Store(path.join(root, "state.json"));
+  store.state.t3 = { token: "dead", expiresAt: Date.now() - 1000, issuedAt: Date.now() - 31 * 86_400_000 };
+  const credential = new T3Credential({ url: "http://t3", store, renewCommand: "x", pairingCode: async () => "c", signIn: async () => { throw new Error("down"); } });
+  await assert.rejects(credential.token(), /down/);
 });
 
 test("a fixed token is used as-is", async t => {

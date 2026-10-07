@@ -9,8 +9,10 @@ export type Config = {
   model: { instanceId: string; model: string; options?: Record<string, string | boolean> };
   /** "worktree": one per issue, on its Linear branch. "root": the project's own checkout. */
   workspace: "worktree" | "root";
-  /** Linear user ids allowed to delegate or prompt; empty allows everyone. */
+  /** Linear user ids allowed to delegate or prompt; empty only with ALLOW_ANY_LINEAR_USER=1. */
   allowedUsers: string[];
+  /** Worktree base when the relay is not on the T3 host and cannot ask git. */
+  baseRef?: string;
   statePath: string; pollMs: number;
 };
 
@@ -23,6 +25,9 @@ export function configFromEnv(env: NodeJS.ProcessEnv): Config {
   const [instanceId, ...model] = need("T3CODE_MODEL").split("/");
   if (!instanceId || !model.length) throw new Error("T3CODE_MODEL must be <provider-instance>/<model>, e.g. claudeAgent/claude-sonnet-5.");
   const projects = env.T3CODE_PROJECTS ? JSON.parse(env.T3CODE_PROJECTS) as Record<string, string> : { "*": need("T3CODE_PROJECT") };
+  const allowedUsers = (env.ALLOWED_USER_IDS ?? "").split(",").map(id => id.trim()).filter(Boolean);
+  // Delegating runs code with full access: an open relay must be asked for, not defaulted to.
+  if (!allowedUsers.length && env.ALLOW_ANY_LINEAR_USER !== "1") throw new Error("Set ALLOWED_USER_IDS (Linear user ids), or ALLOW_ANY_LINEAR_USER=1 to let the whole workspace run the agent.");
   if (!env.T3CODE_TOKEN?.trim() && !env.T3CODE_RENEW_COMMAND?.trim()) throw new Error("Set T3CODE_RENEW_COMMAND (relay on the T3 host) or T3CODE_TOKEN.");
   return {
     baseUrl: need("BASE_URL").replace(/\/$/, ""), host: env.HOST || "127.0.0.1", port: Number(env.PORT || 8787),
@@ -31,7 +36,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv): Config {
     t3Url: need("T3CODE_URL"), t3Token: env.T3CODE_TOKEN?.trim() || undefined, t3RenewCommand: env.T3CODE_RENEW_COMMAND?.trim() || undefined,
     projects, model: { instanceId, model: model.join("/"), ...(env.T3CODE_MODEL_OPTIONS ? { options: JSON.parse(env.T3CODE_MODEL_OPTIONS) } : {}) },
     workspace: env.T3CODE_WORKSPACE === "root" ? "root" : "worktree",
-    allowedUsers: (env.ALLOWED_USER_IDS ?? "").split(",").map(id => id.trim()).filter(Boolean),
+    allowedUsers,
+    baseRef: env.T3CODE_BASE_REF?.trim() || undefined,
     statePath: env.STATE_PATH || "./data/state.json", pollMs: Number(env.POLL_MS || 3000),
   };
 }

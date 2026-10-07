@@ -54,9 +54,11 @@ Copy `.env.example` to `.env` (or pass the variables some other way; `ENV_FILE` 
 | `T3CODE_TOKEN` | **Otherwise:** a bearer from `npm run t3:login`, valid 30 days |
 | `T3CODE_MODEL` | `<provider-instance>/<model>`, e.g. `claudeAgent/claude-opus-5-5` |
 | `T3CODE_MODEL_OPTIONS` | Optional JSON, e.g. `{"contextWindow":"1m"}` |
-| `T3CODE_PROJECT` / `T3CODE_PROJECTS` | T3 project title for every issue, or a map by Linear project name (`"*"` = fallback) |
+| `T3CODE_PROJECT` / `T3CODE_PROJECTS` | T3 project title for every issue, or a map by Linear project name (`"*"` = fallback). Titles must match T3 exactly |
 | `T3CODE_WORKSPACE` | `worktree` (default, one per issue) or `root` (the project checkout) |
-| `ALLOWED_USER_IDS` | Comma-separated Linear user ids allowed to delegate or prompt; empty allows the whole workspace |
+| `T3CODE_BASE_REF` | Branch new worktrees start from. Needed when the relay is not on the T3 host; otherwise it asks git |
+| `ALLOWED_USER_IDS` | **Required.** Comma-separated Linear user ids allowed to delegate or prompt |
+| `ALLOW_ANY_LINEAR_USER` | `1` to run without `ALLOWED_USER_IDS`, letting the whole workspace run the agent |
 | `STATE_PATH`, `POLL_MS` | State file (keep it private and persistent) and T3 polling interval |
 
 On the T3 host, the renew command is usually:
@@ -67,6 +69,13 @@ T3CODE_RENEW_COMMAND="t3 auth pairing create --json --ttl 5m --label linear-t3-r
 
 It must run as the user that owns the T3 Code data directory (add `--base-dir` if it is not the default).
 
+Your Linear user id, for `ALLOWED_USER_IDS`:
+
+```sh
+curl -s https://api.linear.app/graphql -H "Authorization: $LINEAR_API_KEY" \
+  -H "Content-Type: application/json" -d '{"query":"{ viewer { id } }"}'
+```
+
 ### 4. Run and install
 
 ```sh
@@ -75,7 +84,8 @@ npm start            # or: npm run build && node dist/server.js
 ```
 
 Open `BASE_URL/linear/install?secret=$INSTALL_SECRET`, approve the app in the workspace, then delegate an issue to it.
-One process serves one Linear workspace; run another instance (own env and state) for another workspace.
+One process serves one Linear workspace and ignores webhooks from any other. For a second workspace,
+create an OAuth app there too (an app has one webhook URL) and run another instance with its own env and state.
 
 ## Nix
 
@@ -107,7 +117,8 @@ else comes from `environmentFile`. State lives in `$XDG_STATE_HOME/linear-t3-rel
 ## Security
 
 - Webhooks are HMAC-verified and must be under a minute old; the OAuth callback needs a one-time state.
-- **Delegating runs code with full access on the T3 host.** Restrict who can with `ALLOWED_USER_IDS` in any shared workspace.
+- **Delegating runs code with full access on the T3 host.** That is why `ALLOWED_USER_IDS` is required unless you opt out.
+- Errors posted to Linear are generic; details (paths, command output) stay in the relay's log.
 - Issue text is untrusted input to the agent, whoever delegated: a teammate's or customer's words can steer it.
   Run T3 Code under an account that holds only the credentials the work needs.
 - Secrets live only in the environment and the state file (mode 600). Logs never print them.
