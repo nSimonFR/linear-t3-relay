@@ -16,6 +16,8 @@ export interface LinearApi {
   activity(sessionId: string, content: Activity, options?: { ephemeral?: boolean; select?: string[] }): Promise<void>;
   addLinks(sessionId: string, links: Array<{ label: string; url: string }>): Promise<void>;
   issue(issueId: string): Promise<Issue>;
+  /** Attaches the PR to the issue itself, as Linear's GitHub integration would. */
+  linkPullRequest(issueId: string, url: string): Promise<void>;
   /** Who started the session, or who wrote the activity when one is given. */
   actor(sessionId: string, activityId?: string): Promise<string | null>;
 }
@@ -106,5 +108,14 @@ export class Linear implements LinearApi {
     }
     const data = await this.graphql<{ agentSession: { creator: { id: string } | null } }>(`query($id: String!) { agentSession(id: $id) { creator { id } } }`, { id: sessionId });
     return data.agentSession.creator?.id ?? null;
+  }
+
+  async linkPullRequest(issueId: string, url: string) {
+    try {
+      await this.graphql(`mutation($issueId: String!, $url: String!) { attachmentLinkGitHubPR(issueId: $issueId, url: $url) { success } }`, { issueId, url });
+    } catch {
+      // Without the GitHub integration Linear refuses a PR link; a plain link still shows on the issue.
+      await this.graphql(`mutation($issueId: String!, $url: String!) { attachmentLinkURL(issueId: $issueId, url: $url, title: "Pull request") { success } }`, { issueId, url });
+    }
   }
 }

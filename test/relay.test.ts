@@ -23,12 +23,14 @@ async function fixture(t: test.TestContext) {
   t.after(() => rm(root, { recursive: true, force: true }));
   const activities: Array<{ content: Activity; options?: { ephemeral?: boolean; select?: string[] } }> = [];
   const links: Array<{ label: string; url: string }> = [];
+  const attached: string[] = [];
   const calls: Array<{ tool: string; args: any }> = [];
   const thread = { status: "running", pendingRequestCount: 0, linkedPullRequest: null as null | { url: string } };
   const t3state = { runs: [{ runId: RUN1, status: "running" }], items: [] as any[], pending: [] as string[] };
   const linear: LinearApi = {
     async activity(_session, content, options) { activities.push({ content, options }); },
     async addLinks(_session, added) { links.push(...added); },
+    async linkPullRequest(issueId, url) { attached.push(`${issueId} ${url}`); },
     async actor(_session, activityId) { return activityId === "intruder-activity" ? "someone-else" : "me"; },
     async issue() { return { identifier: "NSI-7", title: "Greet loudly", url: "https://linear.app/x/NSI-7", branchName: "feature/nsi-7-greet-loudly", projectName: "T3 bridge sandbox" }; },
   };
@@ -51,7 +53,7 @@ async function fixture(t: test.TestContext) {
   const relay = new Relay({ config, store, linear, t3, defaultBranch: async () => "main" });
   const event = (action: string, activity?: AgentSessionEvent["agentActivity"]): AgentSessionEvent =>
     ({ type: "AgentSessionEvent", action, agentSession: { id: "ls1", issue: { id: "issue-1" } }, agentActivity: activity, promptContext: "<issue>Greet loudly</issue>" });
-  return { relay, store, activities, links, calls, thread, t3state, event, root };
+  return { relay, store, activities, links, attached, calls, thread, t3state, event, root };
 }
 
 test("delegation launches a worktree thread on the issue branch, once", async t => {
@@ -88,6 +90,7 @@ test("progress, then the final reply and the PR link", async t => {
   f.t3state.runs = [{ runId: RUN1, status: "completed" }];
   await f.relay.poll();
   assert.deepEqual(f.links, [{ label: "Pull request", url: "https://github.com/o/r/pull/4" }]);
+  assert.deepEqual(f.attached, ["issue-1 https://github.com/o/r/pull/4"]);
   assert.deepEqual(f.activities.at(-1)!.content, { type: "response", body: "Done. https://github.com/o/r/pull/4" });
   const reported = f.activities.length;
   await f.relay.poll();

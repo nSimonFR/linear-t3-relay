@@ -217,6 +217,7 @@ export class Relay {
       session.prUrl = prUrl;
       store.save();
       await linear.addLinks(session.linearSessionId, [{ label: "Pull request", url: prUrl }]);
+      await linear.linkPullRequest(session.issueId, prUrl);
     }
     await linear.activity(session.linearSessionId, { type: "response", body: summary || "Done." });
   }
