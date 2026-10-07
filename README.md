@@ -77,6 +77,33 @@ npm start            # or: npm run build && node dist/server.js
 Open `BASE_URL/linear/install?secret=$INSTALL_SECRET`, approve the app in the workspace, then delegate an issue to it.
 One process serves one Linear workspace; run another instance (own env and state) for another workspace.
 
+## Nix
+
+The flake exposes `packages.default` and `homeManagerModules.default`, which runs one relay per
+workspace as a launchd agent (macOS) or a systemd user service (Linux):
+
+```nix
+{
+  inputs.linear-t3-relay = {
+    url = "github:nSimonFR/linear-t3-relay";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+  # in a home-manager config:
+  imports = [ inputs.linear-t3-relay.homeManagerModules.default ];
+  services.linear-t3-relay = {
+    enable = true;
+    instances.personal = {
+      port = 8787;
+      environmentFile = config.age.secrets.linear-t3-relay-personal.path; # Linear app, BASE_URL, project…
+      renewCommand = "${lib.getExe pkgs.t3code} auth pairing create --json --ttl 5m --scope orchestration:read --scope orchestration:operate";
+    };
+  };
+}
+```
+
+`HOST`, `PORT`, `STATE_PATH`, `T3CODE_URL` and `T3CODE_RENEW_COMMAND` come from the module; everything
+else comes from `environmentFile`. State lives in `$XDG_STATE_HOME/linear-t3-relay/<name>/`.
+
 ## Security
 
 - Webhooks are HMAC-verified and must be under a minute old; the OAuth callback needs a one-time state.
