@@ -16,6 +16,8 @@ export interface LinearApi {
   activity(sessionId: string, content: Activity, options?: { ephemeral?: boolean; select?: string[] }): Promise<void>;
   addLinks(sessionId: string, links: Array<{ label: string; url: string }>): Promise<void>;
   issue(issueId: string): Promise<Issue>;
+  /** Who started the session, or who wrote the activity when one is given. */
+  actor(sessionId: string, activityId?: string): Promise<string | null>;
 }
 
 export function verifySignature(secret: string, signature: string | undefined, body: Buffer): boolean {
@@ -95,5 +97,14 @@ export class Linear implements LinearApi {
     const data = await this.graphql<{ issue: { identifier: string; title: string; url: string; branchName: string; project: { name: string } | null } }>(
       `query($id: String!) { issue(id: $id) { identifier title url branchName project { name } } }`, { id: issueId });
     return { ...data.issue, projectName: data.issue.project?.name ?? null };
+  }
+
+  async actor(sessionId: string, activityId?: string): Promise<string | null> {
+    if (activityId) {
+      const data = await this.graphql<{ agentActivity: { user: { id: string } | null } }>(`query($id: String!) { agentActivity(id: $id) { user { id } } }`, { id: activityId });
+      return data.agentActivity.user?.id ?? null;
+    }
+    const data = await this.graphql<{ agentSession: { creator: { id: string } | null } }>(`query($id: String!) { agentSession(id: $id) { creator { id } } }`, { id: sessionId });
+    return data.agentSession.creator?.id ?? null;
   }
 }

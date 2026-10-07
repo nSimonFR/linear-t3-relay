@@ -12,7 +12,7 @@ const config: Config = {
   baseUrl: "https://relay.example", host: "127.0.0.1", port: 0, installSecret: "s",
   linearClientId: "c", linearClientSecret: "cs", linearWebhookSecret: "ws",
   t3Url: "http://t3", t3Token: "t", projects: { "*": "sandbox" }, model: { instanceId: "claudeAgent", model: "claude-sonnet-5" },
-  statePath: "", pollMs: 0,
+  workspace: "worktree", allowedUsers: [], statePath: "", pollMs: 0,
 };
 
 const RUN1 = "run:1";
@@ -29,6 +29,7 @@ async function fixture(t: test.TestContext) {
   const linear: LinearApi = {
     async activity(_session, content, options) { activities.push({ content, options }); },
     async addLinks(_session, added) { links.push(...added); },
+    async actor(_session, activityId) { return activityId === "intruder-activity" ? "someone-else" : "me"; },
     async issue() { return { identifier: "NSI-7", title: "Greet loudly", url: "https://linear.app/x/NSI-7", branchName: "feature/nsi-7-greet-loudly", projectName: "T3 bridge sandbox" }; },
   };
   const t3 = { async call(tool: string, args: any = {}): Promise<any> {
@@ -133,4 +134,26 @@ test("answers map letters, numbers and labels to options", () => {
   assert.equal(parseAnswer(q, "blue"), "Blue");
   assert.equal(parseAnswer(q, "purple please"), "purple please");
   assert.deepEqual(parseAnswer({ ...q, multiSelect: true }, "A, B"), ["Red", "Blue"]);
+});
+
+test("root mode launches in the project checkout", async t => {
+  const f = await fixture(t);
+  (f.relay as any).deps.config = { ...config, workspace: "root" };
+  await f.relay.handle(f.event("created"));
+  assert.deepEqual(f.calls.find(c => c.tool === "t3_thread_launch")!.args.workspaceStrategy, { type: "root" });
+});
+
+test("only allowed users can delegate or prompt", async t => {
+  const f = await fixture(t);
+  (f.relay as any).deps.config = { ...config, allowedUsers: ["me"] };
+  await f.relay.handle(f.event("created"));
+  assert.ok(f.calls.some(c => c.tool === "t3_thread_launch"));
+  await f.relay.handle(f.event("prompted", { id: "intruder-activity", body: "rm -rf everything" }));
+  assert.equal(f.calls.some(c => c.tool === "t3_thread_send"), false);
+  assert.match((f.activities.at(-1)!.content as { body: string }).body, /not allowed/);
+
+  const g = await fixture(t);
+  (g.relay as any).deps.config = { ...config, allowedUsers: ["boss"] };
+  await g.relay.handle(g.event("created"));
+  assert.equal(g.calls.some(c => c.tool === "t3_thread_launch"), false);
 });

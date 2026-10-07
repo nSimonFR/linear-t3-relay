@@ -91,6 +91,14 @@ export class Relay {
     this.deps.store.state.seen.push(key);
     this.deps.store.save();
     try {
+      const allowed = this.deps.config.allowedUsers;
+      if (allowed.length) {
+        const actor = await this.deps.linear.actor(event.agentSession.id, event.action === "prompted" ? event.agentActivity?.id : undefined);
+        if (!actor || !allowed.includes(actor)) {
+          await this.deps.linear.activity(event.agentSession.id, { type: "error", body: "You are not allowed to run this agent." });
+          return;
+        }
+      }
       if (event.action === "created") await this.start(event);
       else if (event.action === "prompted") await this.prompted(event);
     } catch (error) {
@@ -114,11 +122,12 @@ export class Relay {
     const launched = await t3.call<{ threadId: string; runId: string }>("t3_thread_launch", {
       projectId: project.id, title: `${issue.identifier}: ${issue.title}`, message: prompt(issue, event.promptContext),
       modelSelection: config.model, runtimeMode: "full-access", interactionMode: "default",
-      workspaceStrategy: { type: "worktree", baseRef: await this.deps.defaultBranch(project.workspaceRoot), branch: issue.branchName, startFromOrigin: true },
+      workspaceStrategy: config.workspace === "root" ? { type: "root" }
+        : { type: "worktree", baseRef: await this.deps.defaultBranch(project.workspaceRoot), branch: issue.branchName, startFromOrigin: true },
     });
     this.sessions[sessionId] = { linearSessionId: sessionId, issueId, identifier: issue.identifier, t3ThreadId: launched.threadId, cursor: 0, awaitingRunId: launched.runId };
     store.save();
-    await linear.activity(sessionId, { type: "action", action: "Started T3 Code thread", parameter: `${project.title} · ${issue.branchName}` });
+    await linear.activity(sessionId, { type: "action", action: "Started T3 Code thread", parameter: config.workspace === "root" ? project.title : `${project.title} · ${issue.branchName}` });
   }
 
   private async prompted(event: AgentSessionEvent) {

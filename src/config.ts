@@ -5,6 +5,10 @@ export type Config = {
   /** Linear project name → T3 project title; "*" is the fallback. */
   projects: Record<string, string>;
   model: { instanceId: string; model: string; options?: Record<string, string | boolean> };
+  /** "worktree": one per issue, on its Linear branch. "root": the project's own checkout. */
+  workspace: "worktree" | "root";
+  /** Linear user ids allowed to delegate or prompt; empty allows everyone. */
+  allowedUsers: string[];
   statePath: string; pollMs: number;
 };
 
@@ -23,6 +27,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv): Config {
     linearClientId: need("LINEAR_CLIENT_ID"), linearClientSecret: need("LINEAR_CLIENT_SECRET"), linearWebhookSecret: need("LINEAR_WEBHOOK_SECRET"),
     t3Url: need("T3CODE_URL"), t3Token: need("T3CODE_TOKEN"),
     projects, model: { instanceId, model: model.join("/"), ...(env.T3CODE_MODEL_OPTIONS ? { options: JSON.parse(env.T3CODE_MODEL_OPTIONS) } : {}) },
+    workspace: env.T3CODE_WORKSPACE === "root" ? "root" : "worktree",
+    allowedUsers: (env.ALLOWED_USER_IDS ?? "").split(",").map(id => id.trim()).filter(Boolean),
     statePath: env.STATE_PATH || "./data/state.json", pollMs: Number(env.POLL_MS || 3000),
   };
 }
