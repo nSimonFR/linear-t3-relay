@@ -14,17 +14,19 @@ export class T3CodeMcp {
   private nextId = 1;
   private readonly endpoint: URL;
 
-  constructor(url: string, private readonly token: string, private readonly fetcher: typeof fetch = fetch) {
+  /** `token` is read before every request so a renewed credential applies at once. */
+  constructor(url: string, private readonly token: () => Promise<string>, private readonly fetcher: typeof fetch = fetch) {
     this.endpoint = new URL("/mcp", url);
   }
 
   private async post(body: Record<string, unknown>): Promise<JsonRpcResponse | undefined> {
     let response: Response;
+    const token = await this.token();
     try {
       response = await this.fetcher(this.endpoint, {
         method: "POST", redirect: "error",
         headers: {
-          authorization: `Bearer ${this.token}`, "content-type": "application/json",
+          authorization: `Bearer ${token}`, "content-type": "application/json",
           accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-06-18",
           ...(this.session ? { "mcp-session-id": this.session } : {}),
         },
@@ -35,6 +37,7 @@ export class T3CodeMcp {
     } catch { throw new McpTransportError("T3Code MCP connection failed. Check T3CODE_URL and that T3Code is running."); }
     const session = response.headers.get("mcp-session-id");
     if (session) this.session = session;
+    if (response.status === 401) { this.session = undefined; throw new McpTransportError("T3Code MCP credential rejected.", 401); }
     if (response.status === 404 && this.session) { this.session = undefined; throw new McpTransportError("T3Code MCP session expired.", 404); }
     if (!response.ok && response.status !== 202) throw new McpTransportError(`T3Code MCP HTTP ${response.status}.`, response.status);
     if (!("id" in body)) return undefined;

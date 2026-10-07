@@ -20,6 +20,8 @@ export type Installation = { accessToken: string; refreshToken?: string; expires
 
 export type State = {
   installation?: Installation;
+  /** T3 MCP bearer the relay minted itself (see T3CODE_RENEW_COMMAND). */
+  t3?: { token: string; expiresAt: number };
   oauthStates: Record<string, number>;
   sessions: Record<string, Session>;
   /** Webhook deliveries already accepted, so Linear retries are ignored. */

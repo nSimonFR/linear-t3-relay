@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 try { process.loadEnvFile(".env"); } catch { /* no .env yet */ }
 import { createHash, randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";

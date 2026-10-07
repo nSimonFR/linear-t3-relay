@@ -1,7 +1,9 @@
 export type Config = {
   baseUrl: string; host: string; port: number; installSecret: string;
   linearClientId: string; linearClientSecret: string; linearWebhookSecret: string;
-  t3Url: string; t3Token: string;
+  t3Url: string;
+  /** Fixed bearer from `npm run t3:login`, or a command printing a pairing code so the relay signs in and renews by itself. */
+  t3Token?: string; t3RenewCommand?: string;
   /** Linear project name → T3 project title; "*" is the fallback. */
   projects: Record<string, string>;
   model: { instanceId: string; model: string; options?: Record<string, string | boolean> };
@@ -21,11 +23,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv): Config {
   const [instanceId, ...model] = need("T3CODE_MODEL").split("/");
   if (!instanceId || !model.length) throw new Error("T3CODE_MODEL must be <provider-instance>/<model>, e.g. claudeAgent/claude-sonnet-5.");
   const projects = env.T3CODE_PROJECTS ? JSON.parse(env.T3CODE_PROJECTS) as Record<string, string> : { "*": need("T3CODE_PROJECT") };
+  if (!env.T3CODE_TOKEN?.trim() && !env.T3CODE_RENEW_COMMAND?.trim()) throw new Error("Set T3CODE_RENEW_COMMAND (relay on the T3 host) or T3CODE_TOKEN.");
   return {
     baseUrl: need("BASE_URL").replace(/\/$/, ""), host: env.HOST || "127.0.0.1", port: Number(env.PORT || 8787),
     installSecret: need("INSTALL_SECRET"),
     linearClientId: need("LINEAR_CLIENT_ID"), linearClientSecret: need("LINEAR_CLIENT_SECRET"), linearWebhookSecret: need("LINEAR_WEBHOOK_SECRET"),
-    t3Url: need("T3CODE_URL"), t3Token: need("T3CODE_TOKEN"),
+    t3Url: need("T3CODE_URL"), t3Token: env.T3CODE_TOKEN?.trim() || undefined, t3RenewCommand: env.T3CODE_RENEW_COMMAND?.trim() || undefined,
     projects, model: { instanceId, model: model.join("/"), ...(env.T3CODE_MODEL_OPTIONS ? { options: JSON.parse(env.T3CODE_MODEL_OPTIONS) } : {}) },
     workspace: env.T3CODE_WORKSPACE === "root" ? "root" : "worktree",
     allowedUsers: (env.ALLOWED_USER_IDS ?? "").split(",").map(id => id.trim()).filter(Boolean),

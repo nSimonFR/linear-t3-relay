@@ -6,6 +6,7 @@
   "description": "Delegate a Linear issue to an agent; T3 Code does the work and reports back in the Agent Session.",
   "scripts": {
     "start": "tsx src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
     "t3:login": "tsx src/t3-login.ts",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
@@ -17,5 +18,11 @@
     "@types/node": "^26.6.4",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
-  }
+  },
+  "bin": {
+    "linear-t3-relay": "dist/server.js",
+    "linear-t3-relay-login": "dist/t3-login.js"
+  },
+  "license": "MIT",
+  "repository": "github:nSimonFR/linear-t3-relay"
 }
