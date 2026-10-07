@@ -184,10 +184,13 @@ export class Relay {
       if (!FINAL.has(item.status)) break;
       session.cursor = item.position + 1;
       if (item.type === "assistant_message" && item.runId === session.awaitingRunId) session.lastReplyItemId = item.itemId;
+      // `gh pr create` prints the URL; attaching it now beats waiting for the run to end.
+      if (item.type === "command_execution") await this.attachPullRequest(session, PR_URL.exec(item.text ?? "")?.[0]);
       if (QUIET.has(item.type)) continue;
       if (item.type === "error") await linear.activity(session.linearSessionId, { type: "error", body: item.text ?? "T3 Code reported an error." });
       else await linear.activity(session.linearSessionId, { type: "action", ...describe(item) }, { ephemeral: true });
     }
+    await this.attachPullRequest(session, read.thread.linkedPullRequest?.url);
     store.save();
 
     if (read.thread.pendingRequestCount && !session.question) {
@@ -212,14 +215,16 @@ export class Relay {
     }
     if (run.status !== "completed") return;
     const summary = session.lastReplyItemId ? await this.fullText(threadId, session.lastReplyItemId) : "";
-    const prUrl = read.thread.linkedPullRequest?.url ?? PR_URL.exec(summary)?.[0];
-    if (prUrl && prUrl !== session.prUrl) {
-      session.prUrl = prUrl;
-      store.save();
-      await linear.addLinks(session.linearSessionId, [{ label: "Pull request", url: prUrl }]);
-      await linear.linkPullRequest(session.issueId, prUrl);
-    }
+    await this.attachPullRequest(session, PR_URL.exec(summary)?.[0]);
     await linear.activity(session.linearSessionId, { type: "response", body: summary || "Done." });
+  }
+
+  private async attachPullRequest(session: Session, url: string | undefined) {
+    if (!url || url === session.prUrl) return;
+    session.prUrl = url;
+    this.deps.store.save();
+    await this.deps.linear.addLinks(session.linearSessionId, [{ label: "Pull request", url }]);
+    await this.deps.linear.linkPullRequest(session.issueId, url);
   }
 
   private async fullText(threadId: string, itemId: string): Promise<string> {

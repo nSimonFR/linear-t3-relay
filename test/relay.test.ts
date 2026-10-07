@@ -160,3 +160,16 @@ test("only allowed users can delegate or prompt", async t => {
   await g.relay.handle(g.event("created"));
   assert.equal(g.calls.some(c => c.tool === "t3_thread_launch"), false);
 });
+
+test("a PR is attached as soon as gh pr create prints it, then never again", async t => {
+  const f = await fixture(t);
+  await f.relay.handle(f.event("created"));
+  f.t3state.items = [item(0, { type: "command_execution", title: null, text: "$ gh pr create --draft\nhttps://github.com/o/r/pull/9" })];
+  await f.relay.poll();
+  assert.deepEqual(f.attached, ["issue-1 https://github.com/o/r/pull/9"]);
+  f.t3state.items.push(item(1, { type: "assistant_message", text: "PR: https://github.com/o/r/pull/9" }));
+  f.t3state.runs = [{ runId: RUN1, status: "completed" }];
+  await f.relay.poll();
+  assert.equal(f.attached.length, 1);
+  assert.equal(f.links.length, 1);
+});
