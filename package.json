@@ -1,0 +1,21 @@
+{
+  "name": "linear-t3-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Delegate a Linear issue to an agent; T3 Code does the work and reports back in the Agent Session.",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "t3:login": "tsx src/t3-login.ts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
